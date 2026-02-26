@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InfoSphere AI</title>
+
+<style>
+:root{
+  --bg:#0b0f19;
+  --card:#141a2a;
+  --text:#e8ebf3;
+  --accent:#4f8cff;
+}
+.light{
+  --bg:#f4f6fb;
+  --card:#ffffff;
+  --text:#000000;
+  --accent:#2563eb;
+}
+*{box-sizing:border-box;font-family:Inter,Segoe UI,sans-serif}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  transition:.3s;
+}
+header{
+  text-align:center;
+  padding:24px;
+}
+h1{color:var(--accent)}
+.controls{
+  display:flex;
+  justify-content:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+select,button{
+  padding:10px 14px;
+  border-radius:18px;
+  border:none;
+  cursor:pointer;
+  background:var(--accent);
+  color:white;
+  font-weight:600;
+}
+.search{
+  max-width:720px;
+  margin:20px auto;
+  display:flex;
+  gap:10px;
+  padding:10px;
+}
+.search input{
+  flex:1;
+  padding:14px;
+  border-radius:22px;
+  border:none;
+  font-size:16px;
+}
+.container{
+  max-width:900px;
+  margin:auto;
+  padding:20px;
+}
+.card{
+  background:var(--card);
+  padding:26px;
+  border-radius:22px;
+  animation:fade .3s ease;
+}
+ul{margin-left:20px}
+ul li{margin-bottom:8px;line-height:1.6}
+.actions{
+  margin-top:15px;
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.followups button{
+  background:#2b365d;
+}
+.loader{text-align:center;padding:20px;font-weight:600}
+.bookmark-list{
+  background:var(--card);
+  padding:16px;
+  border-radius:18px;
+  margin-top:20px;
+}
+@keyframes fade{
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:translateY(0)}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>InfoSphere AI</h1>
+  <p>Perplexity-style explanations • Offline ready</p>
+</header>
+
+<div class="controls">
+  <button onclick="toggleMode()">🌗 Mode</button>
+  <button onclick="startVoice()">🎤 Voice</button>
+  <button onclick="showBookmarks()">⭐ Bookmarks</button>
+</div>
+
+<div class="search">
+  <input id="query" placeholder="Ask any topic…" />
+  <button onclick="searchInfo()">Search</button>
+</div>
+
+<div class="container" id="results"></div>
+
+<script>
+const cache = JSON.parse(localStorage.getItem("cache")||"{}");
+const bookmarks = JSON.parse(localStorage.getItem("bookmarks")||"{}");
+
+function toggleMode(){
+  document.body.classList.toggle("light");
+}
+
+function startVoice(){
+  const r = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+  r.lang="en-US";
+  r.start();
+  r.onresult=e=>{
+    query.value=e.results[0][0].transcript;
+    searchInfo();
+  };
+}
+
+function saveCache(key,data){
+  cache[key]=data;
+  localStorage.setItem("cache",JSON.stringify(cache));
+}
+
+function bookmark(topic,data){
+  bookmarks[topic]=data;
+  localStorage.setItem("bookmarks",JSON.stringify(bookmarks));
+  alert("Bookmarked!");
+}
+
+function showBookmarks(){
+  let html="<div class='bookmark-list'><h3>Saved Bookmarks</h3>";
+  for(let k in bookmarks){
+    html+=`<p><button onclick="loadBookmark('${k}')">${k}</button></p>`;
+  }
+  html+="</div>";
+  results.innerHTML=html;
+}
+
+function loadBookmark(k){
+  renderResult(bookmarks[k],true);
+}
+
+function generateFollowUps(topic){
+  return [
+    `What is ${topic}?`,
+    `Why is ${topic} important?`,
+    `Applications of ${topic}`,
+    `Advantages and disadvantages of ${topic}`
+  ];
+}
+
+function renderResult(data,offline=false){
+  const followUps = generateFollowUps(data.title)
+    .map(q=>`<button onclick="quickSearch('${q}')">${q}</button>`).join("");
+
+  results.innerHTML=`
+    <div class="card">
+      <h2>${data.title}</h2>
+      <p>${offline?"⚡ Offline result<br>":""}${data.intro}</p>
+      <ul>${data.points.map(p=>`<li>${p}</li>`).join("")}</ul>
+
+      <div class="actions">
+        <button onclick="explainMore('${data.title}')">Explain more</button>
+        <button onclick="bookmark('${data.title}',${JSON.stringify(data)})">⭐ Bookmark</button>
+      </div>
+
+      <div class="followups">
+        <h4>Follow-up questions</h4>
+        ${followUps}
+      </div>
+    </div>
+  `;
+}
+
+function quickSearch(q){
+  query.value=q;
+  searchInfo();
+}
+
+async function explainMore(topic){
+  query.value=topic;
+  results.innerHTML="<div class='loader'>Expanding explanation…</div>";
+  const res = await fetch(
+    "https://en.wikipedia.org/w/api.php"+
+    "?action=query&format=json&prop=extracts"+
+    "&explaintext=true&titles="+encodeURIComponent(topic)+
+    "&origin=*"
+  );
+  const data = await res.json();
+  const page = data.query.pages[Object.keys(data.query.pages)[0]];
+  const text = page.extract.split(". ").slice(0,15);
+
+  renderResult({
+    title:topic,
+    intro:text.slice(0,3).join(". ")+".",
+    points:text.slice(3)
+  });
+}
+
+async function searchInfo(){
+  const q=query.value.trim();
+  if(!q) return;
+
+  if(!navigator.onLine && cache[q]){
+    renderResult(cache[q],true);
+    return;
+  }
+
+  results.innerHTML="<div class='loader'>Thinking…</div>";
+
+  try{
+    const res = await fetch(
+      "https://en.wikipedia.org/w/api.php"+
+      "?action=query&format=json&prop=extracts"+
+      "&exintro=true&explaintext=true"+
+      "&titles="+encodeURIComponent(q)+
+      "&origin=*"
+    );
+    const data = await res.json();
+    const page = data.query.pages[Object.keys(data.query.pages)[0]];
+    const text = page.extract.split(". ");
+
+    const result = {
+      title:page.title,
+      intro:text.slice(0,3).join(". ")+".",
+      points:text.slice(3,10)
+    };
+
+    saveCache(q,result);
+    renderResult(result);
+  }
+  catch{
+    results.innerHTML="Error loading data.";
+  }
+}
+</script>
+
+</body>
+</html>
